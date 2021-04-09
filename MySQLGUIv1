@@ -1,0 +1,263 @@
+import tkinter as tk
+from tkinter import messagebox as MessageBox
+from mysql.connector import connect, Error
+from getpass import getpass
+import datetime
+import xlrd
+import xlsxwriter
+###mysql gui version one: Log in to mysql server, see databases and tables and create databases and tables. 
+###v2 will include inserting data, queries, etc. and will be based on a refactor of this.
+###Learning mysql, mysql python connector, and more about tkinter with this project. 
+class Backend:
+    def login(self, username, passwrd):
+        #try to log into the server, returns true or false so the gui can update itself
+        try:
+            self.cnx = connect(user=username, password=passwrd, host="localhost")
+            cursor = self.cnx.cursor()
+            
+            cursor.close()
+            print("Logged into MySql Server Successfully")
+            self.entered = True
+            return True
+        except Error as err:
+            print(err)
+            MessageBox.showerror(title="Error", message="This Error Occurred:\n" + str(err) + "\nPlease Try Logging in Again")
+            self.entered = False
+            return False
+
+    def execute(self, command):
+        if self.entered == True:
+            try:
+                cursor = self.cnx.cursor()
+                cursor.execute(command)
+                returns = cursor.fetchall()
+                return returns
+            except Error as err:
+                MessageBox.showerror(title="Error Executing Command", message=str(err))  
+              
+
+#GUI
+root = tk.Tk()
+
+class GUI_WINDOW:
+    def __init__(self, master):
+        self.master = master
+        master.title("SQL GUI")
+        master.geometry("600x600")
+        #file entry box 
+        tk.Label(master, text="File Entry (Optional)").grid(row=0, column=0)
+        self.file_entry = tk.Entry(master)
+        self.file_entry.grid(row=0, column=1)
+        retrieve_data_button =  tk.Button(master, text="Retrieve Data", command=self.getData).grid(row=0, column=2)
+        #help button
+        help_button = tk.Button(master, text="Help", command=self.showHelpPage)
+        #mysql login button
+        self.mysql_login_button = tk.Button(master, text="Login to MySql Server", command = self.getLoginInfo)
+        self.mysql_login_button.grid(row=1, column = 3, padx=60)
+        self.logged_in = False
+        #database create or choose from existing
+        self.database_list_var = tk.StringVar(master)
+        self.database_list_var.set("Existing Databases")
+        self.database_dropdown = tk.OptionMenu(master, self.database_list_var, "Login to MySQL Server to see existing databases", command=self.updateTableDropdown)
+        self.database_dropdown.grid(row=1, column = 0)
+        tk.Label(master, text="or").grid(row=1, column =1)
+        database_creation_button = tk.Button(master, text="Create a New Database", command = self.database_creation_popup)
+        database_creation_button.grid(row=1, column=2)
+        #create a table or choose from existing tables
+        self.table_list_var = tk.StringVar(master)
+        self.table_list_var.set("Existing Tables")
+        self.table_dropdown = tk.OptionMenu(master, self.table_list_var, "Login to MySQL Server to see existing tables")
+        self.table_dropdown.grid(row=2, column = 0)
+        tk.Label(master, text="or").grid(row=2, column =1)
+        table_creation_button = tk.Button(master, text="Create a New Table", command = self.table_creation_popup)
+        table_creation_button.grid(row=2, column=2)
+
+    def showHelpPage(self):
+        help_page = tk.Tk()
+        ####TODO:> Text boxes with instructions about how to use gui.
+
+    def getLoginInfo(self):#login popup window
+        if self.logged_in == False:
+            self.login_window = tk.Tk()
+            self.login_window.title("Login to MySql Server")
+            self.login_window.geometry("200x100")
+            tk.Label(self.login_window, text="Username").grid(row=0, column=0)
+            self.username_entry = tk.Entry(self.login_window)
+            self.username_entry.grid(row=0, column=1)
+            tk.Label(self.login_window, text="Password").grid(row=1, column=0)
+            self.password_entry = tk.Entry(self.login_window)
+            self.password_entry.grid(row=1, column=1)
+            enter_info =  tk.Button(self.login_window, text= "Enter", command=self.saveInfoAndClose)
+            enter_info.grid(row=2, column = 1)
+        else: 
+            self.mysql_login_button['text'] = 'Logged In'
+
+    def close(self):
+        if self.logged_in == True:
+            self.backend.cnx.close()
+        self.master.destroy()
+
+    def saveInfoAndClose(self):
+        username = self.username_entry.get()
+        password = self.password_entry.get()
+        self.backend = Backend()
+        #returns true if username and password worked
+        self.logged_in = self.backend.login(username, password)
+        self.updateDatabaseDropdown()
+        self.login_window.destroy()
+
+    def updateDatabaseDropdown(self):
+        if self.logged_in == True:
+            returns = self.backend.execute("SHOW DATABASES")#update databases dropdown
+            #comes as a single element tuple, so do this to make it usable
+            database_names = [i[0] for i in returns]
+            print(database_names)
+            self.database_dropdown = tk.OptionMenu(self.master, self.database_list_var, *database_names, command=self.updateTableDropdown)
+            self.database_dropdown.grid(row=1, column = 0)
+
+    def database_creation_popup(self):#create a new database
+        self.create_window = tk.Tk()
+        self.create_window.title("Create a Database")
+        self.create_window.geometry("200x100")
+        if self.logged_in == True:
+            tk.Label(self.create_window, text="Database Name").grid(row=0, column=0)
+            self.database_name = tk.Entry(self.create_window)
+            self.database_name.grid(row=0, column=1)
+            done_button = tk.Button(self.create_window, text="Enter", command = self.create_database)
+            done_button.grid(row=1, column=1)
+        else:
+            tk.Label(self.create_window, text="Login to Create a Database").grid(row=0, column=0)
+            done_button = tk.Button(self.create_window, text="Close", command=self.create_window.destroy)
+            done_button.grid(row=1, column=1)
+
+    def create_database(self):#create db and update the dropdown
+        self.backend.execute("CREATE DATABASE {}".format(self.database_name.get()))
+        self.updateDatabaseDropdown()
+        self.create_window.destroy()
+
+    def create_table(self, database_name, table_name, variable_list):
+        #self.backend.execute("CREATE TABLE {}.{} ()")
+        return 0
+
+    def updateTableDropdown(self, database_name):
+        if self.logged_in == True:
+            returns = self.backend.execute("SHOW TABLES IN {}".format(database_name))
+            table_names = [i[0] for i in returns]
+            self.table_dropdown = tk.OptionMenu(self.master, self.table_list_var, *table_names)
+            self.table_dropdown.grid(row=2, column = 0)
+
+    def table_creation_popup(self):
+        self.table_creation_window = tk.Tk()
+        self.table_creation_window.geometry("400x400")
+        self.table_creation_window.title("Create a Table")
+        if self.logged_in == True:
+            tk.Label(self.table_creation_window, text="Database: {}".format(self.database_list_var.get())).grid(row=0, column=0)
+            tk.Label(self.table_creation_window, text="New Table Name").grid(row=1, column=0)
+            table_name_entry = tk.Entry(self.table_creation_window)
+            table_name_entry.grid(row=1, column=1)
+            #select number of variables dropdown
+            tk.Label(self.table_creation_window, text="Number of Variables").grid(row=2, column=0)
+            num_of_vars =  tk.StringVar(self.table_creation_window)
+            num_of_vars.set(1)
+            var_options = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+            num_choose = tk.OptionMenu(self.table_creation_window, num_of_vars, *var_options)
+            num_choose.grid(row=2, column=1)
+            def collect_basic_info():
+                #get the name and number of variables then iterate through each to set the datatype
+                table_name = table_name_entry.get()
+                num_vars = num_of_vars.get()
+                try:
+                    num_vars = int(num_vars)
+                    var_names = []
+                    datatype_choices = [] 
+                    option_menus = []
+                    string_vars = []
+                    labels = []
+                    datatypes = ["INT", "DECIMAL", "DOUBLE", "FLOAT", "CHAR", "VARCHAR"]  
+                    for i in range(num_vars):
+                        #variable name label
+                        var_name_label = tk.Label(self.table_creation_window, text="Variable #{} Name:".format(i+1)).grid(row=4+i, column=0)
+                        var_name_entry = tk.Entry(self.table_creation_window)
+                        var_name_entry.grid(row=4+i, column=1)
+                        var_names.append(var_name_entry)
+                        datatype_label = tk.Label(self.table_creation_window, text="Datatype:")
+                        datatype_label.grid(row=4+i, column=2)
+                        datatype_choice = tk.StringVar(self.table_creation_window)
+                        datatype_choice.set(datatypes[0])
+                        datatype_choose = tk.OptionMenu(self.table_creation_window, datatype_choice, *datatypes)
+                        datatype_choose.grid(row=4+i, column=3)
+                        option_menus.append(datatype_choose)
+                        string_vars.append(datatype_choice)
+                    enter_data_button = tk.Button(self.table_creation_window, text="Create Table", command = lambda: self.get_and_make_table(table_name, var_names, string_vars))
+                    enter_data_button.grid(row=num_vars+6, column=3)
+                except ValueError as err:
+                    MessageBox.showerror(title="Error", message="Variable Name has to be a string, please try again")
+
+            basic_info_enter = tk.Button(self.table_creation_window, text="Enter Info", command=collect_basic_info)
+            basic_info_enter.grid(row=3, column=1)
+        else:
+            tk.Label(self.table_creation_window, text="Log In to Create a Table")
+            close_button = tk.Button(self.table_creation_window, text="Close", command = self.table_creation_window.destroy)
+
+    def get_and_make_table(self, table_name, var_name_entries, datatype_string_vars):
+        var_names = []
+        datatypes = []
+        for i in range(len(var_name_entries)):#get data from the entries and dropdowns
+            var_names.append(var_name_entries[i].get())
+            datatypes.append(datatype_string_vars[i].get())
+        #table create syntax : CREATE TABLE 'table_name' ("var_name, datatype, nullness, etc")
+        create_statement = "CREATE TABLE {}.{} (".format(self.database_list_var.get(), table_name)
+        #make the table entries:
+        table_variables = []
+        for i in range(len(datatype_string_vars)):
+            if datatypes[i] == "FLOAT":
+                table_variables.append(var_names[i] + " FLOAT(20,10)")
+            elif datatypes[i] == "INT":
+                table_variables.append(var_names[i] + " INT")
+            elif datatypes[i] == "DECIMAL":
+                table_variables.append(var_names[i] + " DECIMAL(20,10)")
+            elif datatypes[i] == "DOUBLE":
+                table_variables.append(var_names[i] + " DOUBLE(20,10)")
+            elif datatypes[i] == "CHAR":
+                table_variables.append(var_names[i] + " CHAR(30)")
+            elif datatypes[i] == "VARCHAR":
+                table_variables.append(var_names[i] + " VARCHAR(1000)")
+        table_variables = ','.join(table_variables)
+        self.backend.execute(create_statement + table_variables + ")")
+        self.table_creation_window.destroy()
+        self.updateTableDropdown(self.database_list_var.get())
+
+    def getData(self):#get data from the file the user put in
+        file_name = self.file_entry.get()
+        splt = file_name.split('\\')
+        if len(splt) > 1:
+            filetype = splt[-1].split('.')
+            filetype = filetype[1] 
+            location = '//'.join(splt)
+            if filetype == "txt" or filetype == "csv" or filetype == "xls" or filetype == "xlsx":
+                all_data = []
+                #get all data
+                if filetype == 'txt':
+                    loc = open(location).read()
+                    raw = loc.split('\n')
+                    for i in range(len(raw)):
+                        all_data.append(raw[i].split(', '))
+                    #remove empty lists
+                    all_data = [dp for dp in all_data if dp != ['']]
+                elif filetype == 'xlsx' or filetype == 'xls':
+                    wb = xlrd.open_workbook(location)
+                    sheet = wb.sheet_by_index(0)
+                    for i in range(sheet.nrows):
+                        all_data.append(sheet.row_values(i))
+                elif filetype == 'csv':
+                    with open(location) as csv_file:
+                        csv_reader = csv.reader(csv_file, delimiter=',')
+                        for row in csv_reader:
+                            all_data.append(row)
+                        all_data = [dp for dp in all_data if dp != [''] and dp != []]
+                self.user_data = all_data
+                print(all_data)
+
+gui = GUI_WINDOW(root)
+root.protocol("WM_DELETE_WINDOW", gui.close)
+root.mainloop()
